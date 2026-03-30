@@ -178,7 +178,7 @@ void CustomController::processObservation()
     double phase_sin = 0.0;
     double phase_cos = 1.0;
     
-    std::cout << "===== OBSERVATION START =====" << std::endl;
+    // std::cout << "===== OBSERVATION START =====" << std::endl;
 
     Eigen::Quaterniond q;
     q.x() = rd_cc_.q_virtual_(3);
