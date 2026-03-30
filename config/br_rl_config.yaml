@@ -1,0 +1,7 @@
+controller:
+  hz: 50.0
+  debug_enabled: true
+  debug_print_frequency: 100
+
+onnx:
+  actor_model: "2026-03-27_09-01-22_model_23800.onnx"
