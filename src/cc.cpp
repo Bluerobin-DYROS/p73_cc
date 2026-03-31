@@ -119,21 +119,25 @@ void CustomController::computeFast()
             torque_rl_(i) = rd_.Kp_j[i] * (target - rd_.q_(i)) + rd_.Kd_j[i] * (0.0 - rd_.q_dot_(i));
         }
 
-        const double torque_blend_time_s = 1.0;
-        for (int i = 0; i < num_action; i++)
-        {
-            torque_rl_(i) = DyrosMath::cubic(
-                rd_.control_time_,
-                time_init_s,
-                time_init_s + torque_blend_time_s,
-                torque_init_(i),
-                torque_rl_(i),
-                0.0,
-                0.0
-            );
-        }
+        // const double torque_blend_time_s = 1.0;
+        // for (int i = 0; i < num_action; i++)
+        // {
+        //     torque_rl_(i) = DyrosMath::cubic(
+        //         rd_cc_.control_time_,
+        //         time_init_s,
+        //         time_init_s + torque_blend_time_s,
+        //         torque_init_(i),
+        //         torque_rl_(i),
+        //         0.0,
+        //         0.0
+        //     );
+        // }
 
         rd_.torque_desired = torque_rl_;
+        
+        if(!dc_.simMode){
+            rd_.torque_desired = WBC::JointTorqueToMotorTorque(rd_, torque_rl_);
+        }
     }
     else{
         if (cc_mode_active_prev_)
