@@ -20,7 +20,7 @@
 #define DEBUG_DATA(label, value) if (debug_enabled_) { std::cout << COLOR_MAGENTA << "[DATA] " << label << ": " << COLOR_WHITE << value << COLOR_RESET << std::endl; }
 
 const int kPolicyToRobot[CustomController::num_action] = {0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11};
-// const int kPolicyToRobot[CustomController::num_action] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+// const int kPolicyToRobot[CustomController::num_action] = {0, 2, 4, 6, 8, 10, 1, 3, 5, 7, 9, 11};
 
 CustomController::CustomController(DataContainer &dc, RobotEigenData &rd)
     : dc_(dc), rd_(rd)
@@ -112,20 +112,25 @@ void CustomController::computeFast()
             torque_rl_(i) = rd_.Kp_j[i] * (q_init_(i) - rd_.q_(i)) + rd_.Kd_j[i] * (0.0 - rd_.q_dot_(i));
         }
 
-
         for (int i = 0; i < num_action; i++) {
-            const int j = kPolicyToRobot[i]; 
+            double target = q_init_(i) + rl_action_(i);
+            target = DyrosMath::minmax_cut(target, q_min(i), q_max(i));
 
-            const double q_lower = q_min(j);
-            const double q_upper = q_max(j);
+            torque_rl_(i) = rd_.Kp_j[i] * (target - rd_.q_(i)) + rd_.Kd_j[i] * (0.0 - rd_.q_dot_(i));
+        }
 
-            // Match IsaacLab JointPositionAction semantics:
-            // processed_action = default_joint_pos + scale * raw_action
-            // In this task config, scale=1.0 and use_default_offset=True.
-            double target = q_init_(j) + rl_action_(i);
-            target = DyrosMath::minmax_cut(target, q_lower, q_upper);
-
-            torque_rl_(j) = rd_.Kp_j[j] * (target - rd_.q_(j)) + rd_.Kd_j[j] * (0.0 - rd_.q_dot_(j));
+        const double torque_blend_time_s = 1.0;
+        for (int i = 0; i < num_action; i++)
+        {
+            torque_rl_(i) = DyrosMath::cubic(
+                rd_.control_time_,
+                time_init_s,
+                time_init_s + torque_blend_time_s,
+                torque_init_(i),
+                torque_rl_(i),
+                0.0,
+                0.0
+            );
         }
 
         rd_.torque_desired = torque_rl_;
@@ -190,20 +195,20 @@ void CustomController::processObservation()
     Eigen::Vector3d euler_angle_ = DyrosMath::rot2Euler(q.toRotationMatrix());
 
     // (1) Root Height : Dim 1
-    state_cur_[data_idx++] = rd_cc_.link_[Pelvis].xpos(2);
+    // state_cur_[data_idx++] = rd_cc_.link_[Pelvis].xpos(2);
     // std::cout << "Root Height: " << rd_cc_.link_[Pelvis].xpos(2) << std::endl;
 
     // (2) Base Linear Velocity (body frame): Dim 3
-    Eigen::Vector3d base_lin_vel_bf; 
-    base_lin_vel_bf = DyrosMath::quatRotateInverse(q, rd_cc_.q_dot_virtual_.segment(0, 3));
+    // Eigen::Vector3d base_lin_vel_bf; 
+    // base_lin_vel_bf = DyrosMath::quatRotateInverse(q, rd_cc_.q_dot_virtual_.segment(0, 3));
     
-    state_cur_[data_idx++] = base_lin_vel_bf(0);
-    state_cur_[data_idx++] = base_lin_vel_bf(1);
-    state_cur_[data_idx++] = base_lin_vel_bf(2);
+    // state_cur_[data_idx++] = base_lin_vel_bf(0);
+    // state_cur_[data_idx++] = base_lin_vel_bf(1);
+    // state_cur_[data_idx++] = base_lin_vel_bf(2);
     // std::cout << "Base Linear Velocity (body frame): " << base_lin_vel_bf.transpose() << std::endl;
 
     // (3) Base Heading (yaw) : Dim 1
-    state_cur_[data_idx++] = euler_angle_(2);
+    // state_cur_[data_idx++] = euler_angle_(2);
     // std::cout << "Base Heading (yaw): " << euler_angle_(2) << std::endl;
 
     // (4) Base Angular Velocity (body frame): Dim 3
@@ -224,6 +229,7 @@ void CustomController::processObservation()
     // std::cout << "Projected Gravity (body frame): " << gravity_bf.transpose() << std::endl;
 
     // (6) velocity_commands : Dim 3
+    commands_.setZero();
     state_cur_[data_idx++] = commands_(0);
     state_cur_[data_idx++] = commands_(1);
     state_cur_[data_idx++] = commands_(2);
@@ -283,10 +289,10 @@ void CustomController::processObservation()
     // std::cout << "Last Leg Actions: " << rl_action_.transpose() << std::endl;
     
     // Centroidal Angular Momentum (body frame) : Dim 3
-    Eigen::Vector3d centroidal_angular_momentum_bf = DyrosMath::quatRotateInverse(q, rd_cc_.centroidal_angular_momentum_);
-    state_cur_[data_idx++] = centroidal_angular_momentum_bf(0);
-    state_cur_[data_idx++] = centroidal_angular_momentum_bf(1);
-    state_cur_[data_idx++] = centroidal_angular_momentum_bf(2);
+    // Eigen::Vector3d centroidal_angular_momentum_bf = DyrosMath::quatRotateInverse(q, rd_cc_.centroidal_angular_momentum_);
+    // state_cur_[data_idx++] = centroidal_angular_momentum_bf(0);
+    // state_cur_[data_idx++] = centroidal_angular_momentum_bf(1);
+    // state_cur_[data_idx++] = centroidal_angular_momentum_bf(2);
     // state_cur_[data_idx++] = rd_cc_.centroidal_angular_momentum_(2); 
     // std::cout << "Centroidal Angular Momentum (body frame): " << centroidal_angular_momentum_bf(0) << ", " << centroidal_angular_momentum_bf(1) << ", " << rd_cc_.centroidal_angular_momentum_(2) << std::endl;
 
@@ -411,7 +417,8 @@ void CustomController::feedforwardPolicy()
         return;
     }
     for (size_t i = 0; i < num_action; i++) {
-            rl_action_(i) = DyrosMath::minmax_cut(action_data[i], -1.0, 1.0);
+            // rl_action_(i) = DyrosMath::minmax_cut(action_data[i], -1.0, 1.0);
+            rl_action_(i) = action_data[i];
     }
 
     time_inference_pre_us = rd_cc_.control_time_us_;
@@ -466,7 +473,8 @@ void CustomController::initVariable()
     // Initialize walking/stepping variables
     // Match IsaacLab config semantics: step_period is half-cycle, full phase cycle is 2*step_period.
     // With training config (step_period=18, dt=0.005, decimation=4): full cycle = 36*0.02 = 0.72 s.
-    step_period_s_ = 0.36;
+    // step_period_s_ = 0.36;
+    step_period_s_ = 0.7;
     phase_period_s_ = 2.0 * step_period_s_;
     step_ticks_ = 0.0;
     phase_indicator_ = 0;
