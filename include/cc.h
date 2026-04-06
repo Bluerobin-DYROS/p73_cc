@@ -59,7 +59,7 @@ private:
     // bool is_on_robot_ = true;
     bool is_on_robot_ = false;
     // std::string onnx_path = "2026-03-30_17-43-08_model_3200.onnx";
-    std::string onnx_path = "2026-03-30_21-34-01_model_35800.onnx";
+    std::string onnx_path = "2026-04-06_09-33-35_model_10000.onnx";
     int input_obs_idx_ = -1;
     int output_action_idx_ = -1;
 
@@ -71,7 +71,7 @@ private:
 
     //--- RL Input
     // static constexpr int num_cur_state = 55;
-    static constexpr int num_cur_state = 47;
+    static constexpr int num_cur_state = 51;
     static constexpr int num_cur_h = 256;
     std::vector<float> state_cur_, h_cur_;
     std::vector<float> normalized_state_cur_;

@@ -19,7 +19,8 @@
 #define DEBUG_ERROR(msg) if (debug_enabled_) { std::cout << COLOR_RED << "[ERROR] " << msg << COLOR_RESET << std::endl; }
 #define DEBUG_DATA(label, value) if (debug_enabled_) { std::cout << COLOR_MAGENTA << "[DATA] " << label << ": " << COLOR_WHITE << value << COLOR_RESET << std::endl; }
 
-const int kPolicyToRobot[CustomController::num_action] = {0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11};
+// const int kPolicyToRobot[CustomController::num_action] = {0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11};
+const int kPolicyToRobot[CustomController::num_action] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 // const int kPolicyToRobot[CustomController::num_action] = {0, 2, 4, 6, 8, 10, 1, 3, 5, 7, 9, 11};
 
 CustomController::CustomController(DataContainer &dc, RobotEigenData &rd)
@@ -199,16 +200,16 @@ void CustomController::processObservation()
     Eigen::Vector3d euler_angle_ = DyrosMath::rot2Euler(q.toRotationMatrix());
 
     // (1) Root Height : Dim 1
-    // state_cur_[data_idx++] = rd_cc_.link_[Pelvis].xpos(2);
+    state_cur_[data_idx++] = rd_cc_.link_[Pelvis].xpos(2);
     // std::cout << "Root Height: " << rd_cc_.link_[Pelvis].xpos(2) << std::endl;
 
     // (2) Base Linear Velocity (body frame): Dim 3
-    // Eigen::Vector3d base_lin_vel_bf; 
-    // base_lin_vel_bf = DyrosMath::quatRotateInverse(q, rd_cc_.q_dot_virtual_.segment(0, 3));
+    Eigen::Vector3d base_lin_vel_bf; 
+    base_lin_vel_bf = DyrosMath::quatRotateInverse(q, rd_cc_.q_dot_virtual_.segment(0, 3));
     
-    // state_cur_[data_idx++] = base_lin_vel_bf(0);
-    // state_cur_[data_idx++] = base_lin_vel_bf(1);
-    // state_cur_[data_idx++] = base_lin_vel_bf(2);
+    state_cur_[data_idx++] = base_lin_vel_bf(0);
+    state_cur_[data_idx++] = base_lin_vel_bf(1);
+    state_cur_[data_idx++] = base_lin_vel_bf(2);
     // std::cout << "Base Linear Velocity (body frame): " << base_lin_vel_bf.transpose() << std::endl;
 
     // (3) Base Heading (yaw) : Dim 1
