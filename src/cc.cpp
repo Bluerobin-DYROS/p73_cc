@@ -109,30 +109,27 @@ void CustomController::computeFast()
 
         torque_rl_.setZero();
         
+        //--- Upperbody
         for (int i = 0; i < MODEL_DOF; i++) {
             torque_rl_(i) = rd_.Kp_j[i] * (q_init_(i) - rd_.q_(i)) + rd_.Kd_j[i] * (0.0 - rd_.q_dot_(i));
         }
 
+        //--- Initial safe logic
+        Eigen::VectorQd q_target_; q_target_.setZero();
+        const double spline_time_s = 0.5;
+
         for (int i = 0; i < num_action; i++) {
             double target = q_init_(i) + rl_action_(i);
-            target = DyrosMath::minmax_cut(target, q_min(i), q_max(i));
-
-            torque_rl_(i) = rd_.Kp_j[i] * (target - rd_.q_(i)) + rd_.Kd_j[i] * (0.0 - rd_.q_dot_(i));
+            target = DyrosMath::cubic(rd_cc_.control_time_, time_init_s, time_init_s + spline_time_s, q_init_(i), target, 0.0, 0.0 );
+            q_target_(i) = DyrosMath::minmax_cut(target, q_min(i), q_max(i));
         }
 
-        // const double torque_blend_time_s = 1.0;
-        // for (int i = 0; i < num_action; i++)
-        // {
-        //     torque_rl_(i) = DyrosMath::cubic(
-        //         rd_cc_.control_time_,
-        //         time_init_s,
-        //         time_init_s + torque_blend_time_s,
-        //         torque_init_(i),
-        //         torque_rl_(i),
-        //         0.0,
-        //         0.0
-        //     );
-        // }
+        //--- RL output
+        for (int i = 0; i < num_action; i++) {
+            torque_rl_(i) = rd_.Kp_j[i] * (q_target_(i) - rd_.q_(i)) + rd_.Kd_j[i] * (0.0 - rd_.q_dot_(i));
+        }
+
+
 
         rd_.torque_desired = torque_rl_;
         
