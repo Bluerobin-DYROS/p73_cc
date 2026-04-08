@@ -200,16 +200,16 @@ void CustomController::processObservation()
     Eigen::Vector3d euler_angle_ = DyrosMath::rot2Euler(q.toRotationMatrix());
 
     // (1) Root Height : Dim 1
-    state_cur_[data_idx++] = rd_cc_.link_[Pelvis].xpos(2);
+    // state_cur_[data_idx++] = rd_cc_.link_[Pelvis].xpos(2);
     // std::cout << "Root Height: " << rd_cc_.link_[Pelvis].xpos(2) << std::endl;
 
     // (2) Base Linear Velocity (body frame): Dim 3
-    Eigen::Vector3d base_lin_vel_bf; 
-    base_lin_vel_bf = DyrosMath::quatRotateInverse(q, rd_cc_.q_dot_virtual_.segment(0, 3));
+    // Eigen::Vector3d base_lin_vel_bf; 
+    // base_lin_vel_bf = DyrosMath::quatRotateInverse(q, rd_cc_.q_dot_virtual_.segment(0, 3));
     
-    state_cur_[data_idx++] = base_lin_vel_bf(0);
-    state_cur_[data_idx++] = base_lin_vel_bf(1);
-    state_cur_[data_idx++] = base_lin_vel_bf(2);
+    // state_cur_[data_idx++] = base_lin_vel_bf(0);
+    // state_cur_[data_idx++] = base_lin_vel_bf(1);
+    // state_cur_[data_idx++] = base_lin_vel_bf(2);
     // std::cout << "Base Linear Velocity (body frame): " << base_lin_vel_bf.transpose() << std::endl;
 
     // (3) Base Heading (yaw) : Dim 1
