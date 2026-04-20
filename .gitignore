@@ -1,0 +1,18 @@
+# Build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Training artifacts
+events.out.tfevents.*
+*.pt
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
