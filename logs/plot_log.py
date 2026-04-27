@@ -134,6 +134,29 @@ def joint_label(prefix: str, idx: int) -> str:
     return f"{prefix}[{idx}]"
 
 
+def compute_lin_vel_body(d: Dict[str, np.ndarray]) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Rotate world-frame linear velocity into body frame using the logged quaternion.
+    Matches cc.cpp:894 quatRotateInverse: a - b + c where
+      a = v*(2w^2 - 1), b = 2w*cross(xyz,v), c = 2*xyz*dot(xyz,v)
+    Returns (vx_b, vy_b, vz_b) or None if columns are missing.
+    """
+    need = ["quat_x", "quat_y", "quat_z", "quat_w", "lin_vel_wx", "lin_vel_wy", "lin_vel_wz"]
+    if not all(k in d for k in need):
+        return None
+    qx, qy, qz, qw = d["quat_x"], d["quat_y"], d["quat_z"], d["quat_w"]
+    vx, vy, vz = d["lin_vel_wx"], d["lin_vel_wy"], d["lin_vel_wz"]
+    two_w2_m1 = 2.0 * qw * qw - 1.0
+    dot = qx * vx + qy * vy + qz * vz
+    # cross(q_vec, v)
+    cx = qy * vz - qz * vy
+    cy = qz * vx - qx * vz
+    cz = qx * vy - qy * vx
+    vbx = vx * two_w2_m1 - 2.0 * qw * cx + 2.0 * qx * dot
+    vby = vy * two_w2_m1 - 2.0 * qw * cy + 2.0 * qy * dot
+    vbz = vz * two_w2_m1 - 2.0 * qw * cz + 2.0 * qz * dot
+    return vbx, vby, vbz
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Single-CSV plots (unchanged)
 # ═══════════════════════════════════════════════════════════════════
@@ -157,10 +180,20 @@ def plot_imu(t, d, out):
         if name in d:
             axes[1, 1].plot(t, d[name], lw=0.8, label=name.split("_")[-1])
     axes[1, 1].set_title("Linear Velocity (world)"); axes[1, 1].legend(fontsize=8); axes[1, 1].grid(True, alpha=0.3)
-    for name in ["cmd_vx", "cmd_vy", "cmd_vyaw"]:
+    # Velocity Command (dashed) with true body-frame velocity overlay (solid)
+    cmd_pairs = [("cmd_vx", "tab:blue"), ("cmd_vy", "tab:orange"), ("cmd_vyaw", "tab:green")]
+    for name, color in cmd_pairs:
         if name in d:
-            axes[2, 0].plot(t, d[name], lw=0.8, label=name)
-    axes[2, 0].set_title("Velocity Command"); axes[2, 0].legend(fontsize=8); axes[2, 0].grid(True, alpha=0.3)
+            axes[2, 0].plot(t, d[name], lw=1.2, ls="--", color=color, label=f"{name} (cmd)")
+    lin_b = compute_lin_vel_body(d)
+    if lin_b is not None:
+        vbx, vby, _ = lin_b
+        axes[2, 0].plot(t, vbx, lw=0.9, color="tab:blue", alpha=0.9, label="vx_b (true)")
+        axes[2, 0].plot(t, vby, lw=0.9, color="tab:orange", alpha=0.9, label="vy_b (true)")
+    if "ang_vel_bz" in d:
+        axes[2, 0].plot(t, d["ang_vel_bz"], lw=0.9, color="tab:green", alpha=0.9, label="wz_b (true)")
+    axes[2, 0].set_title("Velocity Command vs True (body frame)")
+    axes[2, 0].legend(fontsize=7, ncol=2); axes[2, 0].grid(True, alpha=0.3)
     axes[2, 0].set_xlabel("time [s]")
     for name in ["gait_sin", "gait_cos"]:
         if name in d:
@@ -172,6 +205,28 @@ def plot_imu(t, d, out):
         ax_val.plot(t, d["value"], lw=0.8, color="red", alpha=0.5, label="value")
         ax_val.set_ylabel("value", color="red"); ax_val.legend(fontsize=8, loc="upper left")
     fig.tight_layout(); path = out / "01_imu_base_state.png"; fig.savefig(path, dpi=150); plt.close(fig)
+    return path
+
+
+def plot_vel_tracking(t, d, out):
+    """Per-axis (x/y/yaw) velocity command vs true body-frame velocity."""
+    lin_b = compute_lin_vel_body(d)
+    axes_info = [
+        ("x", "cmd_vx", lin_b[0] if lin_b is not None else None, "tab:blue",   "vx_b [m/s]"),
+        ("y", "cmd_vy", lin_b[1] if lin_b is not None else None, "tab:orange", "vy_b [m/s]"),
+        ("yaw", "cmd_vyaw", d.get("ang_vel_bz"),                 "tab:green",  "wz_b [rad/s]"),
+    ]
+    fig, axes = plt.subplots(3, 1, figsize=(14, 9), sharex=True)
+    fig.suptitle("Velocity Command vs True Base Velocity (body frame)", fontsize=14)
+    for ax, (label, cmd_key, true_arr, color, ylabel) in zip(axes, axes_info):
+        if cmd_key in d:
+            ax.plot(t, d[cmd_key], lw=1.4, ls="--", color=color, label=f"{cmd_key} (cmd)")
+        if true_arr is not None:
+            ax.plot(t, true_arr, lw=1.0, color=color, alpha=0.9, label=f"{label} true")
+        ax.set_title(f"{label}-axis"); ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3); ax.legend(fontsize=9, loc="upper right")
+    axes[-1].set_xlabel("time [s]")
+    fig.tight_layout(); path = out / "01b_vel_tracking.png"; fig.savefig(path, dpi=150); plt.close(fig)
     return path
 
 
@@ -327,13 +382,26 @@ def compare_imu(ts, ds, tr, dr, out):
             axes[1, 1].plot(tr, dr[name], lw=0.7, color=REAL_COLOR, alpha=REAL_ALPHA)
     axes[1, 1].set_title("Linear Velocity (world)"); _dual_legend(axes[1, 1]); axes[1, 1].grid(True, alpha=0.3)
 
-    # Command velocity
+    # Command velocity (dashed) vs true body-frame velocity (solid)
     for name in ["cmd_vx", "cmd_vy", "cmd_vyaw"]:
         if name in ds:
-            axes[2, 0].plot(ts, ds[name], lw=0.7, color=SIM_COLOR, alpha=SIM_ALPHA)
+            axes[2, 0].plot(ts, ds[name], lw=0.9, ls="--", color=SIM_COLOR, alpha=SIM_ALPHA)
         if name in dr:
-            axes[2, 0].plot(tr, dr[name], lw=0.7, color=REAL_COLOR, alpha=REAL_ALPHA)
-    axes[2, 0].set_title("Velocity Command"); _dual_legend(axes[2, 0]); axes[2, 0].grid(True, alpha=0.3)
+            axes[2, 0].plot(tr, dr[name], lw=0.9, ls="--", color=REAL_COLOR, alpha=REAL_ALPHA)
+    lin_b_s = compute_lin_vel_body(ds)
+    lin_b_r = compute_lin_vel_body(dr)
+    if lin_b_s is not None:
+        axes[2, 0].plot(ts, lin_b_s[0], lw=0.7, color=SIM_COLOR, alpha=SIM_ALPHA)
+        axes[2, 0].plot(ts, lin_b_s[1], lw=0.7, color=SIM_COLOR, alpha=SIM_ALPHA)
+    if lin_b_r is not None:
+        axes[2, 0].plot(tr, lin_b_r[0], lw=0.7, color=REAL_COLOR, alpha=REAL_ALPHA)
+        axes[2, 0].plot(tr, lin_b_r[1], lw=0.7, color=REAL_COLOR, alpha=REAL_ALPHA)
+    if "ang_vel_bz" in ds:
+        axes[2, 0].plot(ts, ds["ang_vel_bz"], lw=0.7, color=SIM_COLOR, alpha=SIM_ALPHA)
+    if "ang_vel_bz" in dr:
+        axes[2, 0].plot(tr, dr["ang_vel_bz"], lw=0.7, color=REAL_COLOR, alpha=REAL_ALPHA)
+    axes[2, 0].set_title("Velocity Command (dashed) vs True Body (solid)")
+    _dual_legend(axes[2, 0]); axes[2, 0].grid(True, alpha=0.3)
     axes[2, 0].set_xlabel("time [s]")
 
     # Gait phase + value
@@ -583,6 +651,7 @@ def plot_csv(csv_path: Path, show: bool = False) -> Path:
     saved: List[Path] = []
     for fn in [
         lambda: plot_imu(t, data, out_dir),
+        lambda: plot_vel_tracking(t, data, out_dir),
         lambda: plot_joint_group(t, data, "q_raw", "Joint Position (raw)", "02_joint_pos_raw.png", out_dir),
         lambda: plot_joint_group(t, data, "qdot", "Joint Velocity", "03_joint_vel.png", out_dir),
         lambda: plot_joint_group(t, data, "action", "RL Actions", "04_actions.png", out_dir, n_joints=12),

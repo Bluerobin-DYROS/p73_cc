@@ -150,7 +150,7 @@ public:
 
     // Gait phase counter (50Hz step counter)
     int gait_step_counter_ = 0;
-    int gait_period_steps_ = 60;  // from rough_env_cfg __post_init__
+    int gait_period_steps_ = 70;  // from rough_env_cfg __post_init__
 
     // Velocity command (updated by ROS2 subscriber)
     std::mutex vel_mutex_;
