@@ -93,7 +93,7 @@ public:
     //   command(26) + motion_anchor_ori_b(6) + base_ang_vel(3)
     //   + joint_pos_rel(13) + joint_vel_rel(13) + last_action(13) = 74
     // (motion_anchor_pos_b and base_lin_vel are dropped — both require state estimation.)
-    static constexpr int NUM_TRACKING_OBS = 74;
+    static constexpr int NUM_TRACKING_OBS = 80;
     static constexpr int NUM_TRACKING_ACT = 13;
     static constexpr int MOTION_NUM_BODIES_OUT = 8;   // body_names in cfg: base_link, WaistYaw, L_HipPitch, L_Knee, L_Foot, R_HipPitch, R_Knee, R_Foot
     static constexpr int MOTION_ANCHOR_IDX   = 0;     // base_link is first in body_names
@@ -117,7 +117,7 @@ public:
     };
 
     //////////////////////// Observation / Action ////////////////////////
-    std::vector<float> policy_frame_;   // 74D current obs frame
+    std::vector<float> policy_frame_;   // 80D current obs frame
 
     // Raw policy output (Isaac order), fed back as `last_action` in next obs
     Matrix<double, NUM_TRACKING_ACT, 1> rl_action_;

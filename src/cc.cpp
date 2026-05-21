@@ -8,10 +8,8 @@
 // Motion-tracking policy adaptor for whole_body_tracking/p73_walk.
 //
 // Policy ONNX: /home/user/ros2_ws/src/p73_cc/policy/policy_tracking.onnx
-//   Trained from: Tracking-Flat-P73-Wo-State-Estimation-v0
 //   Inputs:
-//     obs       [1, 74]   — single frame, no history stacking
-//                          (motion_anchor_pos_b and base_lin_vel removed)
+//     obs       [1, 80]   — single frame, no history stacking
 //     time_step [1, 1]    — float frame index (cast to long internally)
 //   Outputs:
 //     actions         [1, 13]      — raw action, Isaac order
@@ -181,9 +179,9 @@ void CustomController::loadOnnX()
             input_shape.size()));
     }
 
-    // Sanity: obs buffer must be 74 floats
+    // Sanity: obs buffer must be 80 floats
     if (static_cast<int>(input_states_buffer[input_obs_idx_].size()) != NUM_TRACKING_OBS) {
-        throw std::runtime_error("[p73_cc] obs input size mismatch (expected 74).");
+        throw std::runtime_error("[p73_cc] obs input size mismatch (expected 80).");
     }
 
     cout << "[p73_cc] Policy loaded." << endl;
@@ -321,16 +319,18 @@ void CustomController::processNoise()
 }
 
 // =====================================================================
-// processObservation — build 74-D tracking obs (no state estimation)
+// processObservation — build 80-D tracking obs
 //
 // Layout (all in Isaac joint order where applicable):
 //   [0  : 13]  command: motion.joint_pos[t]
 //   [13 : 26]  command: motion.joint_vel[t]
-//   [26 : 32]  motion_anchor_ori_b (6)  — first 2 cols of rotmat, row-major
-//   [32 : 35]  base_ang_vel (body frame, 3)
-//   [35 : 48]  joint_pos_rel (q - q_default, Isaac order, 13)
-//   [48 : 61]  joint_vel_rel (Isaac order, 13)
-//   [61 : 74]  last_action   (raw, Isaac order, 13)
+//   [26 : 29]  motion_anchor_pos_b (3)
+//   [29 : 35]  motion_anchor_ori_b (6)  — first 2 cols of rotmat, row-major
+//   [35 : 38]  base_lin_vel (body frame, 3)
+//   [38 : 41]  base_ang_vel (body frame, 3)
+//   [41 : 54]  joint_pos_rel (q - q_default, Isaac order, 13)
+//   [54 : 67]  joint_vel_rel (Isaac order, 13)
+//   [67 : 80]  last_action   (raw, Isaac order, 13)
 // =====================================================================
 void CustomController::processObservation()
 {
@@ -342,16 +342,29 @@ void CustomController::processObservation()
     robot_q.y() = rd_.q_virtual_(4);
     robot_q.z() = rd_.q_virtual_(5);
     robot_q.w() = rd_.q_virtual_(6);
+    Vector3d robot_pos_w(rd_.q_virtual_(0), rd_.q_virtual_(1), rd_.q_virtual_(2));
 
     // Body-frame angular velocity (MuJoCo gyro / state estimator gives body frame directly).
     Vector3d ang_vel_b = rd_.q_dot_virtual_.segment<3>(3);
 
-    // --- Motion anchor orientation in world frame (no position needed) ---
+    // Body-frame linear velocity (world lin-vel rotated into body).
+    Vector3d lin_vel_w = rd_.q_dot_virtual_.segment<3>(0);
+    Vector3d lin_vel_b = quatRotateInverse(robot_q, lin_vel_w);
+
+    // --- Motion anchor in world frame, with accumulated loop offset ---
+    Vector3d motion_anchor_pos_w(
+        static_cast<double>(motion_anchor_pos_w_(t, 0)) + motion_pos_offset_(0),
+        static_cast<double>(motion_anchor_pos_w_(t, 1)) + motion_pos_offset_(1),
+        static_cast<double>(motion_anchor_pos_w_(t, 2)) + motion_pos_offset_(2));
     Quaterniond motion_anchor_q_w(
         static_cast<double>(motion_anchor_quat_w_(t, 0)),  // w
         static_cast<double>(motion_anchor_quat_w_(t, 1)),  // x
         static_cast<double>(motion_anchor_quat_w_(t, 2)),  // y
         static_cast<double>(motion_anchor_quat_w_(t, 3))); // z
+
+    // motion_anchor_pos_b = R_robot^{-1} * (motion_pos_w - robot_pos_w)
+    Vector3d dp_w = motion_anchor_pos_w - robot_pos_w;
+    Vector3d motion_anchor_pos_b = quatRotateInverse(robot_q, dp_w);
 
     // motion_anchor_ori_b = quat_inv(robot_q) * motion_q  → rotmat → first 2 cols, row-major
     Quaterniond motion_anchor_q_b = robot_q.inverse() * motion_anchor_q_w;
@@ -366,12 +379,17 @@ void CustomController::processObservation()
     }
     Matrix<double, 13, 1> jp_rel = q_isaac - q_default_isaac_;
 
-    // --- Build 74-D frame ---
+    // --- Build 80-D frame ---
     int idx = 0;
 
     // command = motion.joint_pos[t] ++ motion.joint_vel[t]  (Isaac order, native)
     for (int j = 0; j < 13; ++j) policy_frame_[idx++] = motion_joint_pos_(t, j);
     for (int j = 0; j < 13; ++j) policy_frame_[idx++] = motion_joint_vel_(t, j);
+
+    // motion_anchor_pos_b
+    policy_frame_[idx++] = static_cast<float>(motion_anchor_pos_b(0));
+    policy_frame_[idx++] = static_cast<float>(motion_anchor_pos_b(1));
+    policy_frame_[idx++] = static_cast<float>(motion_anchor_pos_b(2));
 
     // motion_anchor_ori_b: mat[..., :2] reshaped → PyTorch row-major flatten
     // → [R(0,0), R(0,1), R(1,0), R(1,1), R(2,0), R(2,1)]
@@ -381,6 +399,11 @@ void CustomController::processObservation()
     policy_frame_[idx++] = static_cast<float>(R(1, 1));
     policy_frame_[idx++] = static_cast<float>(R(2, 0));
     policy_frame_[idx++] = static_cast<float>(R(2, 1));
+
+    // base_lin_vel (body frame)
+    policy_frame_[idx++] = static_cast<float>(lin_vel_b(0));
+    policy_frame_[idx++] = static_cast<float>(lin_vel_b(1));
+    policy_frame_[idx++] = static_cast<float>(lin_vel_b(2));
 
     // base_ang_vel (body frame)
     policy_frame_[idx++] = static_cast<float>(ang_vel_b(0));
@@ -445,20 +468,21 @@ void CustomController::feedforwardPolicy()
         diag_file << "obs[0..12]  cmd_jpos: ";
         for (int k = 0; k < 13; ++k) diag_file << policy_frame_[k] << " ";
         diag_file << "\n";
-        diag_file << "obs[26..31] anchor_ori_b: "
-                  << policy_frame_[26] << " " << policy_frame_[27] << " "
-                  << policy_frame_[28] << " " << policy_frame_[29] << " "
-                  << policy_frame_[30] << " " << policy_frame_[31] << "\n";
-        diag_file << "obs[32..34] ang_vel_b: "
-                  << policy_frame_[32] << " " << policy_frame_[33] << " " << policy_frame_[34] << "\n";
-        diag_file << "obs[35..47] jpos_rel: ";
-        for (int k = 35; k <= 47; ++k) diag_file << policy_frame_[k] << " ";
+        diag_file << "obs[26..28] anchor_pos_b: "
+                  << policy_frame_[26] << " " << policy_frame_[27] << " " << policy_frame_[28] << "\n";
+        diag_file << "obs[29..34] anchor_ori_b: "
+                  << policy_frame_[29] << " " << policy_frame_[30] << " "
+                  << policy_frame_[31] << " " << policy_frame_[32] << " "
+                  << policy_frame_[33] << " " << policy_frame_[34] << "\n";
+        diag_file << "obs[35..37] lin_vel_b: "
+                  << policy_frame_[35] << " " << policy_frame_[36] << " " << policy_frame_[37] << "\n";
+        diag_file << "obs[38..40] ang_vel_b: "
+                  << policy_frame_[38] << " " << policy_frame_[39] << " " << policy_frame_[40] << "\n";
+        diag_file << "obs[41..53] jpos_rel: ";
+        for (int k = 41; k <= 53; ++k) diag_file << policy_frame_[k] << " ";
         diag_file << "\n";
-        diag_file << "obs[48..60] jvel_rel: ";
-        for (int k = 48; k <= 60; ++k) diag_file << policy_frame_[k] << " ";
-        diag_file << "\n";
-        diag_file << "obs[61..73] last_act: ";
-        for (int k = 61; k <= 73; ++k) diag_file << policy_frame_[k] << " ";
+        diag_file << "obs[54..66] jvel_rel: ";
+        for (int k = 54; k <= 66; ++k) diag_file << policy_frame_[k] << " ";
         diag_file << "\n";
         diag_file << "rl_action(isaac): " << rl_action_.transpose().format(fmt) << "\n\n";
         diag_file.flush();
@@ -478,34 +502,62 @@ void CustomController::computeFast()
 
     static bool init = true;
     if (init) {
-        init = false;
-        start_time_ = control_time_us;
-        q_init_ = rd_.q_;
-        torque_init_ = rd_.torque_desired;
-        time_inference_pre_ = control_time_us - policy_dt_ * 1e6;
-        rl_action_.setZero();
-        last_action_raw_.setZero();
-        time_step_ = 0;
-        motion_pos_offset_.setZero();
-        anet_hist_initialized_ = false;
-        cached_anet_torque_.setZero();
-        for (auto& h : anet_pos_err_hist_) h = {0.0, 0.0};
-        for (auto& h : anet_vel_hist_)     h = {0.0, 0.0};
+    // Robot's initial world pose (from keyframe / state estimator)
+    Vector3d robot_pos0(rd_.q_virtual_(0), rd_.q_virtual_(1), rd_.q_virtual_(2));
+    Quaterniond robot_q0;
+    robot_q0.x() = rd_.q_virtual_(3);
+    robot_q0.y() = rd_.q_virtual_(4);
+    robot_q0.z() = rd_.q_virtual_(5);
+    robot_q0.w() = rd_.q_virtual_(6);
 
-        q_noise_ = rd_.q_;
-        q_noise_pre_ = q_noise_;
-        q_vel_noise_.setZero();
-        q_dot_lpf_.setZero();
-        noise_time_cur_ = control_time_us / 1e6;
-        noise_time_pre_ = noise_time_cur_ - 0.001;
+    // Motion's frame-0 world pose
+    Vector3d motion_pos0(static_cast<double>(motion_anchor_pos_w_(0, 0)),
+                         static_cast<double>(motion_anchor_pos_w_(0, 1)),
+                         static_cast<double>(motion_anchor_pos_w_(0, 2)));
+    Quaterniond motion_q0(static_cast<double>(motion_anchor_quat_w_(0, 0)),   // w
+                          static_cast<double>(motion_anchor_quat_w_(0, 1)),   // x
+                          static_cast<double>(motion_anchor_quat_w_(0, 2)),   // y
+                          static_cast<double>(motion_anchor_quat_w_(0, 3)));  // z
 
-        cout << "[p73_cc] Tracking mode started (is_on_robot=" << is_on_robot_
-             << ", total_frames=" << total_frames_ << ")" << endl;
+    // Yaw-only correction: extract yaw from motion_q0 and from robot_q0
+    auto yawOf = [](const Quaterniond& q) {
+        // ZYX: yaw = atan2(2(wz+xy), 1 - 2(y^2 + z^2))
+        return std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                          1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+    };
+    double yaw_motion = yawOf(motion_q0);
+    double yaw_robot  = yawOf(robot_q0);
+    double dyaw = yaw_robot - yaw_motion;
 
-        processNoise();
-        processObservation();
-        feedforwardPolicy();
+    Quaterniond R_yaw(Eigen::AngleAxisd(dyaw, Vector3d::UnitZ()));
+
+    for (int t = 0; t < total_frames_; ++t) {
+        Vector3d p(static_cast<double>(motion_anchor_pos_w_(t, 0)),
+                   static_cast<double>(motion_anchor_pos_w_(t, 1)),
+                   static_cast<double>(motion_anchor_pos_w_(t, 2)));
+        // pivot around motion frame-0 origin
+        Vector3d p_rel = p - motion_pos0;
+        Vector3d p_new = R_yaw * p_rel + robot_pos0;
+        motion_anchor_pos_w_(t, 0) = static_cast<float>(p_new(0));
+        motion_anchor_pos_w_(t, 1) = static_cast<float>(p_new(1));
+        motion_anchor_pos_w_(t, 2) = static_cast<float>(p_new(2));
+
+        Quaterniond q(static_cast<double>(motion_anchor_quat_w_(t, 0)),
+                      static_cast<double>(motion_anchor_quat_w_(t, 1)),
+                      static_cast<double>(motion_anchor_quat_w_(t, 2)),
+                      static_cast<double>(motion_anchor_quat_w_(t, 3)));
+        Quaterniond q_new = R_yaw * q;
+        q_new.normalize();
+        motion_anchor_quat_w_(t, 0) = static_cast<float>(q_new.w());
+        motion_anchor_quat_w_(t, 1) = static_cast<float>(q_new.x());
+        motion_anchor_quat_w_(t, 2) = static_cast<float>(q_new.y());
+        motion_anchor_quat_w_(t, 3) = static_cast<float>(q_new.z());
     }
+    motion_pos_offset_.setZero();  // offset already baked into the cache
+
+    cout << "[p73_cc] Motion aligned: dyaw=" << dyaw
+         << " rad, dp=" << (robot_pos0 - motion_pos0).transpose() << endl;
+}
 
     // Per-tick noise/velocity update (1 kHz)
     processNoise();
